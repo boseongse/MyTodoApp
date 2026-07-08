@@ -14,6 +14,35 @@ CATEGORY_ACCENT = {
     "공부": "#ea8a1f",
 }
 
+AUTO_LABEL = "자동 분류"
+DEFAULT_CATEGORY = "개인"
+
+# 텍스트에 아래 키워드가 포함되면 해당 카테고리로 자동 분류한다.
+# CATEGORIES 순서대로 검사해서, 여러 카테고리 키워드가 동시에 있으면 앞쪽 카테고리를 우선한다.
+KEYWORD_RULES = {
+    "업무": [
+        "회의", "미팅", "보고서", "발표", "업무", "프로젝트", "기획서",
+        "이메일", "메일", "출장", "계약", "클라이언트", "고객", "마감", "회사", "결재",
+    ],
+    "개인": [
+        "장보기", "청소", "빨래", "운동", "산책", "병원", "약속", "가족",
+        "친구", "여행", "취미", "쇼핑", "은행", "생일", "약",
+    ],
+    "공부": [
+        "공부", "시험", "과제", "강의", "수업", "독서", "복습", "예습",
+        "자격증", "논문", "스터디", "학원", "단어",
+    ],
+}
+
+
+def classify_by_keyword(text):
+    """텍스트에 포함된 키워드를 보고 카테고리를 추론한다. 일치하는 키워드가 없으면 None."""
+    for cat in CATEGORIES:
+        for keyword in KEYWORD_RULES.get(cat, []):
+            if keyword in text:
+                return cat
+    return None
+
 _MD_SPECIAL = re.compile(r"([\\`*_{}\[\]()#+\-.!~])")
 
 
@@ -51,7 +80,16 @@ def add_todo():
     text = st.session_state.get("new_todo_text", "").strip()
     if not text:
         return
-    category = st.session_state.get("new_todo_category", CATEGORIES[0])
+
+    selected = st.session_state.get("new_todo_category", AUTO_LABEL)
+    if selected == AUTO_LABEL:
+        matched = classify_by_keyword(text)
+        category = matched or DEFAULT_CATEGORY
+        if matched:
+            st.toast(f"'{text}' → {matched}(으)로 자동 분류했습니다", icon="🏷️")
+    else:
+        category = selected
+
     st.session_state.todos.append(
         {
             "id": str(uuid.uuid4()),
@@ -125,11 +163,10 @@ st.markdown(
         padding: 3px 10px; border-radius: 999px; white-space: nowrap;
     }
     .cat-chip {
-        display: inline-flex; align-items: center; gap: 5px; font-size: 12px;
-        font-weight: 600; padding: 4px 10px; border-radius: 999px;
-        background: #f1f3f8; margin-right: 6px;
+        display: inline-flex; align-items: center; font-size: 12px;
+        font-weight: 700; padding: 4px 11px; border-radius: 999px;
+        color: #ffffff; margin-right: 6px;
     }
-    .cat-chip .dot { width: 6px; height: 6px; border-radius: 50%; display: inline-block; }
     </style>
     """,
     unsafe_allow_html=True,
@@ -157,9 +194,9 @@ with st.container(border=True):
     for cat in CATEGORIES:
         cat_todos = [t for t in todos if t["category"] == cat]
         cat_completed = sum(1 for t in cat_todos if t["completed"])
-        dot_color = CATEGORY_ACCENT[cat]
+        accent = CATEGORY_ACCENT[cat]
         chip_html += (
-            f'<span class="cat-chip"><span class="dot" style="background:{dot_color}"></span>'
+            f'<span class="cat-chip" style="background:{accent}">'
             f"{cat} {cat_completed}/{len(cat_todos)}</span>"
         )
     st.markdown(chip_html, unsafe_allow_html=True)
@@ -179,7 +216,7 @@ with st.container(border=True):
         with c2:
             st.selectbox(
                 "카테고리",
-                CATEGORIES,
+                [AUTO_LABEL] + CATEGORIES,
                 key="new_todo_category",
                 label_visibility="collapsed",
             )
@@ -187,6 +224,7 @@ with st.container(border=True):
             st.form_submit_button(
                 "추가", use_container_width=True, on_click=add_todo
             )
+        st.caption("카테고리를 '자동 분류'로 두면 문장 속 키워드로 자동으로 정해드려요.")
 
     # 필터
     filter_options = ["전체"] + CATEGORIES
