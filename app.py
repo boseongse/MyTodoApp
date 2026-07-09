@@ -17,6 +17,9 @@ CATEGORY_ACCENT = {
 AUTO_LABEL = "자동 분류"
 DEFAULT_CATEGORY = "개인"
 
+TIME_SLOTS = [f"{h:02d}:00" for h in range(24)]
+DEFAULT_TIME = "09:00"
+
 # 텍스트에 아래 키워드가 포함되면 해당 카테고리로 자동 분류한다.
 # CATEGORIES 순서대로 검사해서, 여러 카테고리 키워드가 동시에 있으면 앞쪽 카테고리를 우선한다.
 KEYWORD_RULES = {
@@ -57,9 +60,15 @@ def load_todos():
     try:
         with open(TODOS_FILE, "r", encoding="utf-8") as f:
             data = json.load(f)
-        return data if isinstance(data, list) else []
+        if not isinstance(data, list):
+            return []
     except (json.JSONDecodeError, OSError):
         return []
+
+    # 시간 필드가 도입되기 전에 저장된 할 일에는 기본 시간을 채워준다.
+    for todo in data:
+        todo.setdefault("time", DEFAULT_TIME)
+    return data
 
 
 def save_todos(todos):
@@ -90,11 +99,14 @@ def add_todo():
     else:
         category = selected
 
+    time_slot = st.session_state.get("new_todo_time", DEFAULT_TIME)
+
     st.session_state.todos.append(
         {
             "id": str(uuid.uuid4()),
             "text": text,
             "category": category,
+            "time": time_slot,
             "completed": False,
             "created_at": datetime.now(timezone.utc).isoformat(),
         }
@@ -116,28 +128,34 @@ def delete_todo(todo_id):
     if st.session_state.editing_id == todo_id:
         st.session_state.editing_id = None
     st.session_state.pop(f"edit_input_{todo_id}", None)
+    st.session_state.pop(f"edit_time_{todo_id}", None)
 
 
-def start_edit(todo_id, current_text):
+def start_edit(todo_id, current_text, current_time):
     st.session_state[f"edit_input_{todo_id}"] = current_text
+    st.session_state[f"edit_time_{todo_id}"] = current_time
     st.session_state.editing_id = todo_id
 
 
 def save_edit(todo_id):
     new_text = st.session_state.get(f"edit_input_{todo_id}", "").strip()
+    new_time = st.session_state.get(f"edit_time_{todo_id}", DEFAULT_TIME)
     if new_text:
         for todo in st.session_state.todos:
             if todo["id"] == todo_id:
                 todo["text"] = new_text
+                todo["time"] = new_time
                 break
         save_todos(st.session_state.todos)
     st.session_state.editing_id = None
     st.session_state.pop(f"edit_input_{todo_id}", None)
+    st.session_state.pop(f"edit_time_{todo_id}", None)
 
 
 def cancel_edit(todo_id):
     st.session_state.editing_id = None
     st.session_state.pop(f"edit_input_{todo_id}", None)
+    st.session_state.pop(f"edit_time_{todo_id}", None)
 
 
 def set_filter(value):
@@ -146,9 +164,9 @@ def set_filter(value):
 
 def get_filtered_todos():
     todos = st.session_state.todos
-    if st.session_state.filter == "전체":
-        return todos
-    return [t for t in todos if t["category"] == st.session_state.filter]
+    if st.session_state.filter != "전체":
+        todos = [t for t in todos if t["category"] == st.session_state.filter]
+    return sorted(todos, key=lambda t: t["time"])
 
 
 st.set_page_config(page_title="My Todo", page_icon="✅", layout="centered")
@@ -166,6 +184,11 @@ st.markdown(
         display: inline-flex; align-items: center; font-size: 12px;
         font-weight: 700; padding: 4px 11px; border-radius: 999px;
         color: #ffffff; margin-right: 6px;
+    }
+    .time-badge {
+        display: inline-block; font-size: 12px; font-weight: 700;
+        padding: 3px 8px; border-radius: 6px; white-space: nowrap;
+        background: #eef1f6; color: #475569;
     }
     </style>
     """,
@@ -205,14 +228,13 @@ with st.container(border=True):
 
     # 입력 폼 (Enter 또는 버튼으로 추가)
     with st.form("add_form", clear_on_submit=True):
-        c1, c2, c3 = st.columns([3, 1, 1])
-        with c1:
-            st.text_input(
-                "할 일",
-                key="new_todo_text",
-                placeholder="할 일을 입력하세요",
-                label_visibility="collapsed",
-            )
+        st.text_input(
+            "할 일",
+            key="new_todo_text",
+            placeholder="할 일을 입력하세요",
+            label_visibility="collapsed",
+        )
+        c2, c3, c4 = st.columns([1.2, 1.2, 0.8])
         with c2:
             st.selectbox(
                 "카테고리",
@@ -221,10 +243,18 @@ with st.container(border=True):
                 label_visibility="collapsed",
             )
         with c3:
+            st.selectbox(
+                "시간",
+                TIME_SLOTS,
+                index=datetime.now().hour,
+                key="new_todo_time",
+                label_visibility="collapsed",
+            )
+        with c4:
             st.form_submit_button(
                 "추가", use_container_width=True, on_click=add_todo
             )
-        st.caption("카테고리를 '자동 분류'로 두면 문장 속 키워드로 자동으로 정해드려요.")
+        st.caption("카테고리를 '자동 분류'로 두면 문장 속 키워드로 자동으로 정해드려요. 시간은 1시간 단위로 선택합니다.")
 
     # 필터
     filter_options = ["전체"] + CATEGORIES
@@ -250,7 +280,8 @@ with st.container(border=True):
         st.info(msg)
     else:
         for todo in filtered:
-            row = st.columns([0.08, 0.5, 0.16, 0.13, 0.13])
+            is_editing = st.session_state.editing_id == todo["id"]
+            row = st.columns([0.07, 0.19, 0.31, 0.14, 0.14, 0.15])
 
             with row[0]:
                 st.checkbox(
@@ -263,7 +294,21 @@ with st.container(border=True):
                 )
 
             with row[1]:
-                if st.session_state.editing_id == todo["id"]:
+                if is_editing:
+                    st.selectbox(
+                        "시간",
+                        TIME_SLOTS,
+                        key=f"edit_time_{todo['id']}",
+                        label_visibility="collapsed",
+                    )
+                else:
+                    st.markdown(
+                        f'<span class="time-badge">{todo["time"]}</span>',
+                        unsafe_allow_html=True,
+                    )
+
+            with row[2]:
+                if is_editing:
                     st.text_input(
                         "수정",
                         key=f"edit_input_{todo['id']}",
@@ -276,7 +321,7 @@ with st.container(border=True):
                     else:
                         st.markdown(display_text)
 
-            with row[2]:
+            with row[3]:
                 accent = CATEGORY_ACCENT[todo["category"]]
                 st.markdown(
                     f'<span class="category-badge" style="background:{accent};'
@@ -284,8 +329,8 @@ with st.container(border=True):
                     unsafe_allow_html=True,
                 )
 
-            with row[3]:
-                if st.session_state.editing_id == todo["id"]:
+            with row[4]:
+                if is_editing:
                     st.button(
                         "저장",
                         key=f"save_{todo['id']}",
@@ -299,11 +344,11 @@ with st.container(border=True):
                         key=f"edit_{todo['id']}",
                         use_container_width=True,
                         on_click=start_edit,
-                        args=(todo["id"], todo["text"]),
+                        args=(todo["id"], todo["text"], todo["time"]),
                     )
 
-            with row[4]:
-                if st.session_state.editing_id == todo["id"]:
+            with row[5]:
+                if is_editing:
                     st.button(
                         "취소",
                         key=f"cancel_{todo['id']}",
